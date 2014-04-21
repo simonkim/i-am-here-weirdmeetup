@@ -47,6 +47,8 @@ Meteor.subscribe("directory");
 Meteor.subscribe("activeParties",function(){
 
   // If no party selected, or if the selected party was deleted, select one.
+  // !function(d,s,id){var js,fjs=d.getElementsByTagName(s)[0];if(!d.getElementById(id)){js=d.createElement(s);js.id=id;js.src="https://platform.twitter.com/widgets.js";fjs.parentNode.insertBefore(js,fjs);}}(document,"script","twitter-wjs");
+
   Meteor.startup(function () {
     /* reloaded by Meteor. Restart with googleMapsReady not set */
     Session.set("googleMapsReady", false);
@@ -61,8 +63,13 @@ Meteor.subscribe("activeParties",function(){
           mapTypeId: google.maps.MapTypeId.ROADMAP
         };
 
-        map = new google.maps.Map(document.getElementById("map-canvas"), mapOptions); 
-        map.setCenter(new google.maps.LatLng( 37.566535, 126.977969 ));
+        // set init position
+        var latitude = 37.566535;
+        var longitude = 126.977969;
+
+        map = new google.maps.Map(document.getElementById("map-canvas"), mapOptions);
+
+        map.setCenter(new google.maps.LatLng( latitude, longitude ));
         map.set("disableDoubleClickZoom", true);
 
         google.maps.event.addListener(map, "dblclick", function(e){
@@ -74,11 +81,73 @@ Meteor.subscribe("activeParties",function(){
         Session.set("googleMapsReady", true);
       }
     );
+
+    // if api load current position, the map will update the location
+    navigator.geolocation.getCurrentPosition(initCurrentLocation);
   });
-
 });
-
 Meteor.subscribe("comments");
+
+///////////////////////////////////////////////////////////////////////////////
+// Current Location
+
+var setCurrentCoords = function(location){
+  var currentLatitude  = location.coords.latitude;
+  var currentLongitude = location.coords.longitude;
+  Session.set("currentCoords", {x: currentLatitude, y: currentLongitude});
+};
+
+var setMapToCurrentCoords = function(zoom){
+  if(typeof zoom == 'undefined') zoom = 16;
+  var coords = Session.get("currentCoords");
+  map.setCenter(new google.maps.LatLng( coords.x, coords.y ));
+  map.setZoom(zoom);
+};
+
+var openCreateCurrentCoordsDialog = function(){
+  var coords = Session.get("currentCoords");
+  openCreateDialog(coords.x, coords.y);
+};
+
+var clickedCurrentLocation = function(location){
+  setCurrentCoords(location);
+  setMapToCurrentCoords();
+  openCreateCurrentCoordsDialog();
+};
+
+var clickedMoveCurrentLocation = function(location){
+  setCurrentCoords(location);
+  setMapToCurrentCoords();
+};
+
+var initCurrentLocation = function(location){
+  setCurrentCoords(location);
+  setMapToCurrentCoords(11);
+};
+
+Template.page.events({
+  'click .current-location': function (event, template) {
+    event.preventDefault();
+
+    if ( !Meteor.userId() ) {
+      /* TODO: Alert with error: need to be logged in */
+        return;
+    }
+
+    navigator.geolocation.getCurrentPosition(clickedCurrentLocation, openDisallowedDialog);
+
+  },
+  'click .move-current-location': function (event, template) {
+    event.preventDefault();
+
+    if ( !Meteor.userId() ) {
+      /* TODO: Alert with error: need to be logged in */
+        return;
+    }
+
+    navigator.geolocation.getCurrentPosition(clickedMoveCurrentLocation, openDisallowedDialog);
+  }
+});
 
 ///////////////////////////////////////////////////////////////////////////////
 // Party details sidebar
@@ -114,11 +183,14 @@ Template.details.maybeChosen = function (what) {
   return what == myRsvp.rsvp ? "chosen btn-inverse" : "";
 };
 
-
 Template.details.dateTimeText = function(date) {
 
   return date ? new Date(date).toLocaleString() : "Unknown";
 }
+
+Template.details.text = function () {
+  return document.URL;
+};
 
 Template.details.events({
   'click .rsvp_yes': function () {
@@ -197,6 +269,8 @@ var mapCreateMarkerForParty = function(party) {
     });
 
     google.maps.event.addListener(marker, "click", function(e){
+      var tempLocation = "/meetups/" +  marker.title + "," +marker.position.k + "," + marker.position.A;
+      window.history.pushState(null, null, tempLocation);
       Session.set("selected", marker.partyId);
     });
     return marker;
@@ -278,6 +352,12 @@ Template.map.destroyed = function () {
   this.handle && this.handle.stop();
 };
 
+Template.map.selectParty = function(_PartyId, _x, _y){
+    longitude = _x;
+    latitude = _y;
+    Session.set("selected", _PartyId);
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // Create Party dialog
 
@@ -334,6 +414,8 @@ Template.createDialog.events({
 });
 
 Template.createDialog.error = function () {
+  if(Session.get("showCreateDialog")) jQuery("body").addClass("modal-open");
+  else jQuery("body").removeClass("modal-open");
   return Session.get("createError");
 };
 
@@ -341,6 +423,8 @@ Template.createDialog.error = function () {
 // Invite dialog
 
 var openInviteDialog = function () {
+  if(Session.get("showInviteDialog")) jQuery("body").addClass("modal-open");
+  else jQuery("body").removeClass("modal-open");
   Session.set("showInviteDialog", true);
 };
 
@@ -372,12 +456,42 @@ Template.inviteDialog.displayName = function () {
   return displayName(this);
 };
 
+Template.page.helpers({
+  currenturl: function(){
+    return document.URL;
+  }
+});
+
+
+///////////////////////////////////////////////////////////////////////////////
+// Location API Disallowed dialog
+
+var openDisallowedDialog = function () {
+  if(Session.get("showDisallowedDialog")) jQuery("body").addClass("modal-open");
+  else jQuery("body").removeClass("modal-open");
+  Session.set("showDisallowedDialog", true);
+};
+
+Template.page.showDisallowedDialog = function () {
+  if(Session.get("showDisallowedDialog")) jQuery("body").addClass("modal-open");
+  else jQuery("body").removeClass("modal-open");
+  return Session.get("showDisallowedDialog");
+};
+
+Template.disallowedDialog.events({
+  'click .cancel': function (event, template) {
+    Session.set("showDisallowedDialog", false);
+    return false;
+  }
+});
+
+
 ////////////////////////////////////////////////
 /// Comments
 
 var showCommentError = function(message) {
   /* Error message to display in commentform template */
-  console.log( 'error:comment: ' + message)
+  // console.log( 'error:comment: ' + message)
   Session.set( 'errorComment', message);
 };
 
@@ -420,7 +534,7 @@ Template.comments.events ({
         partyId: partyId
     };
 
-    console.log( 'Adding comment: body:' + body + ',partyId:' + partyId);
+    // console.log( 'Adding comment: body:' + body + ',partyId:' + partyId);
     addComment(commentEntry);
 
     /* clear the form & error message */
